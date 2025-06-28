@@ -201,3 +201,6 @@ app.get('/health', (req, res) => res.send('OK'));
 
 Would you like me to generate a production-ready Express.js boilerplate with these features?
   use express rate limit..
+
+
+  make this server compitable for vercel..

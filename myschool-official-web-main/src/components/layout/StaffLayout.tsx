@@ -49,7 +49,7 @@ const navLinks = [
     icon: <Shield size={18} />,
   },
   {
-    path: "/school-result",
+    path: "/staff/school-result",
     label: "School Result",
     icon: <BookOpen size={18} />,
   },

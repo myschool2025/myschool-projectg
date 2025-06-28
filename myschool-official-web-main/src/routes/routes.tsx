@@ -44,6 +44,7 @@ const ContentGanarator = lazy(() => import("@/adminDasboard/contentganarate/Cont
 const AssetsManegment = lazy(() => import("@/adminDasboard/assestManegment/AssetsManegment"));
 const Marketing = lazy(() => import("@/adminDasboard/marketing/Marketing"));
 const ExamManagement = lazy(() => import("@/adminDasboard/academic/ExamManagement"));
+const CardsCertificates = lazy(() => import("@/adminDasboard/academic/PDFGenerator"));
 
 // Lazy-loaded staff components
 const StaffDashboard = lazy(() => import("@/staffDashboard/StaffDashboard"));
@@ -288,6 +289,14 @@ const AppRoutes = () => {
           element={
             <Suspense fallback={<Loading />}>
               <SchoolResult />
+            </Suspense>
+          }
+        />
+        <Route
+          path="cards-certificates"
+          element={
+            <Suspense fallback={<Loading />}>
+              <CardsCertificates />
             </Suspense>
           }
         />

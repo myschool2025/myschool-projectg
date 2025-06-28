@@ -5,7 +5,8 @@ import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import classesData from '@/lib/classes.json';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/$/, '');
+console.log('Backend URL:', BACKEND_URL);
 
 // Updated interface to match server API structure
 interface Student {
@@ -89,24 +90,6 @@ const Students = () => {
   const [totalStudents, setTotalStudents] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [displayOptions, setDisplayOptions] = useState({
-    showName: true,
-    showNumber: true,
-    showClass: true,
-    showDescription: true,
-    showEnglishName: true,
-    showFatherName: true,
-    showMotherName: true,
-    showPhoto: true,
-    showStudentId: true,
-    showAcademicYear: false,
-    showSection: false,
-    showShift: false,
-  });
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [operationStatus, setOperationStatus] = useState<'idle' | 'uploading'>('idle');
-  const [itemsPerPage, setItemsPerPage] = useState(30);
-  const [gridLayout, setGridLayout] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchField, setSearchField] = useState<'all' | 'name' | 'number' | 'class'>('all');
   const [isSearching, setIsSearching] = useState(false);
@@ -128,7 +111,6 @@ const Students = () => {
     try {
       const params: any = {
           page: currentPage,
-          limit: itemsPerPage,
       };
 
       // Add search by number if provided
@@ -162,7 +144,7 @@ const Students = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, itemsPerPage, searchQuery, searchField, selectedClass, toast]);
+  }, [currentPage, searchQuery, searchField, selectedClass, toast]);
 
   // Performance optimization: Debounced search handler
   const debouncedSearch = useMemo(
@@ -229,7 +211,7 @@ const Students = () => {
       return;
     }
 
-    setOperationStatus('uploading');
+    setIsLoading(true);
     try {
       const imageUrl = await uploadImageToImgBB(file);
       if (editStudent) {
@@ -246,7 +228,7 @@ const Students = () => {
         description: error.message || "Failed to upload image",
       });
     } finally {
-      setOperationStatus('idle');
+      setIsLoading(false);
     }
   };
 
@@ -403,41 +385,10 @@ const Students = () => {
     }
   }, [searchQuery, debouncedSearch]);
 
-  // Load saved settings from localStorage
-  useEffect(() => {
-    const savedSettings = localStorage.getItem('studentDisplaySettings');
-    if (savedSettings) {
-      try {
-        const settings = JSON.parse(savedSettings);
-        if (settings.displayOptions) {
-          setDisplayOptions(settings.displayOptions);
-        }
-        if (settings.gridLayout) {
-          setGridLayout(settings.gridLayout);
-        }
-        if (settings.itemsPerPage) {
-          setItemsPerPage(settings.itemsPerPage);
-        }
-      } catch (error) {
-        console.error('Error loading saved settings:', error);
-      }
-    }
-  }, []);
-
-  // Save settings to localStorage whenever they change
-  useEffect(() => {
-    const settingsToSave = {
-      displayOptions,
-      gridLayout,
-      itemsPerPage
-    };
-    localStorage.setItem('studentDisplaySettings', JSON.stringify(settingsToSave));
-  }, [displayOptions, gridLayout, itemsPerPage]);
-
   // Calculate pagination
-  const totalPages = Math.ceil(totalStudents / itemsPerPage);
-  const startIndex = currentPage * itemsPerPage;
-  const endIndex = Math.min(startIndex + itemsPerPage, totalStudents);
+  const totalPages = Math.ceil(totalStudents / 30);
+  const startIndex = currentPage * 30;
+  const endIndex = Math.min(startIndex + 30, totalStudents);
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -449,13 +400,6 @@ const Students = () => {
             <p className="text-gray-600">Manage student profiles and information</p>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowSettingsModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-            >
-              <Settings size={20} />
-              <span>Settings</span>
-            </button>
             <button
               onClick={handleExportToCSV}
               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
@@ -551,7 +495,7 @@ const Students = () => {
                 </div>
         </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 p-6">
                 {classFilteredStudents.map((student) => (
                 <motion.div
                   key={student.id}
@@ -561,7 +505,7 @@ const Students = () => {
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex-1">
-                        {displayOptions.showPhoto && student.photoUrl && (
+                        {student.photoUrl && (
                           <img
                             src={student.photoUrl}
                             alt={student.name}
@@ -569,45 +513,23 @@ const Students = () => {
                             loading="lazy"
                           />
                         )}
-                        {displayOptions.showName && (
-                          <h3 className="font-semibold text-gray-900 text-center">{student.name}</h3>
-                        )}
-                        {displayOptions.showEnglishName && student.englishName && (
-                          <p className="text-sm text-gray-600 text-center">{student.englishName}</p>
-                        )}
-                        {displayOptions.showStudentId && (
-                          <div className="text-center mt-2">
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              ID: {student.id}
-                            </span>
-                          </div>
-                        )}
+                        <h3 className="font-semibold text-gray-900 text-center">{student.name}</h3>
                       </div>
                       </div>
 
                     <div className="space-y-2 text-sm">
-                      {displayOptions.showNumber && (
-                        <p><span className="font-medium">Phone:</span> {student.number}</p>
-                      )}
-                      {displayOptions.showClass && (
-                        <p><span className="font-medium">Class:</span> {student.class}</p>
-                      )}
-                      {displayOptions.showAcademicYear && (
-                        <p><span className="font-medium">Year:</span> {student.academicYear}</p>
-                      )}
-                      {displayOptions.showSection && (
-                        <p><span className="font-medium">Section:</span> {student.section}</p>
-                      )}
-                      {displayOptions.showShift && (
-                        <p><span className="font-medium">Shift:</span> {student.shift}</p>
-                      )}
-                      {displayOptions.showDescription && student.description && (
+                      <p><span className="font-medium">Phone:</span> {student.number}</p>
+                      <p><span className="font-medium">Class:</span> {student.class}</p>
+                      <p><span className="font-medium">Year:</span> {student.academicYear}</p>
+                      <p><span className="font-medium">Section:</span> {student.section}</p>
+                      <p><span className="font-medium">Shift:</span> {student.shift}</p>
+                      {student.description && (
                         <p><span className="font-medium">Description:</span> {student.description}</p>
                       )}
-                      {displayOptions.showFatherName && student.fatherName && (
+                      {student.fatherName && (
                         <p><span className="font-medium">Father:</span> {student.fatherName}</p>
                       )}
-                      {displayOptions.showMotherName && student.motherName && (
+                      {student.motherName && (
                         <p><span className="font-medium">Mother:</span> {student.motherName}</p>
                       )}
                     </div>
@@ -843,7 +765,7 @@ const Students = () => {
                           htmlFor="image-upload"
                           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer"
                         >
-                          {operationStatus === 'uploading' ? 'Uploading...' : 'Upload'}
+                          {isLoading ? 'Uploading...' : 'Upload'}
                         </label>
                       </div>
                       {editStudent.photoUrl && (
@@ -910,245 +832,6 @@ const Students = () => {
                   >
                     Cancel
                     </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Settings Modal */}
-        <AnimatePresence>
-          {showSettingsModal && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
-            >
-              <motion.div
-                initial={{ scale: 0.95 }}
-                animate={{ scale: 1 }}
-                exit={{ scale: 0.95 }}
-                className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-              >
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-semibold">Display Settings</h2>
-                  <button onClick={() => setShowSettingsModal(false)}>
-                    <X size={24} />
-                  </button>
-                </div>
-                
-                <div className="space-y-6">
-                  {/* Display Options Section */}
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 mb-4">Card Display Options</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {Object.entries(displayOptions).map(([key, value]) => (
-                        <label key={key} className="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={value}
-                            onChange={(e) =>
-                              setDisplayOptions(prev => ({
-                                ...prev,
-                                [key]: e.target.checked
-                              }))
-                            }
-                            className="mr-3 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                          />
-                      <span className="text-sm font-medium text-gray-700 capitalize">
-                            {key.replace(/([A-Z])/g, ' $1').trim()}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                  </div>
-
-                  {/* Layout Options Section */}
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 mb-4">Layout Options</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Grid Layout
-                        </label>
-                        <select
-                          value={gridLayout}
-                          onChange={(e) => setGridLayout(e.target.value as 'grid' | 'list')}
-                          className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="grid">Grid View (Cards)</option>
-                          <option value="list">List View (Table)</option>
-                        </select>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Items Per Page
-                        </label>
-                        <select
-                          value={itemsPerPage}
-                          onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                          className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value={15}>15 items</option>
-                          <option value={30}>30 items</option>
-                          <option value={50}>50 items</option>
-                          <option value={100}>100 items</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Quick Actions Section */}
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <button
-                        onClick={() => {
-                          setDisplayOptions({
-                            showName: true,
-                            showNumber: true,
-                            showClass: true,
-                            showDescription: false,
-                            showEnglishName: true,
-                            showFatherName: true,
-                            showMotherName: true,
-                            showPhoto: true,
-                            showStudentId: true,
-                            showAcademicYear: false,
-                            showSection: false,
-                            showShift: false,
-                          });
-                          toast({
-                            title: "Settings Applied",
-                            description: "Default display settings applied",
-                          });
-                        }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                      >
-                        Apply Default
-                      </button>
-                      
-                      <button
-                        onClick={() => {
-                          setDisplayOptions({
-                            showName: true,
-                            showNumber: true,
-                            showClass: true,
-                            showDescription: true,
-                            showEnglishName: true,
-                            showFatherName: true,
-                            showMotherName: true,
-                            showPhoto: true,
-                            showStudentId: true,
-                            showAcademicYear: true,
-                            showSection: true,
-                            showShift: true,
-                          });
-                          toast({
-                            title: "Settings Applied",
-                            description: "Show all fields applied",
-                          });
-                        }}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                      >
-                        Show All Fields
-                      </button>
-                      
-                      <button
-                        onClick={() => {
-                          setDisplayOptions({
-                            showName: true,
-                            showNumber: true,
-                            showClass: true,
-                            showDescription: false,
-                            showEnglishName: false,
-                            showFatherName: false,
-                            showMotherName: false,
-                            showPhoto: false,
-                            showStudentId: true,
-                            showAcademicYear: false,
-                            showSection: false,
-                            showShift: false,
-                          });
-                          toast({
-                            title: "Settings Applied",
-                            description: "Minimal view applied",
-                          });
-                        }}
-                        className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                      >
-                        Minimal View
-                      </button>
-                      
-                      <button
-                        onClick={() => {
-                          setDisplayOptions({
-                            showName: true,
-                            showNumber: true,
-                            showClass: true,
-                            showDescription: true,
-                            showEnglishName: true,
-                            showFatherName: true,
-                            showMotherName: true,
-                            showPhoto: true,
-                            showStudentId: true,
-                            showAcademicYear: true,
-                            showSection: true,
-                            showShift: true,
-                          });
-                          setGridLayout('list');
-                          setItemsPerPage(50);
-                          toast({
-                            title: "Settings Applied",
-                            description: "Detailed list view applied",
-                          });
-                        }}
-                        className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm"
-                      >
-                        Detailed List
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Settings Summary */}
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <h4 className="text-sm font-medium text-gray-900 mb-2">Current Settings Summary</h4>
-                    <div className="text-sm text-gray-600 space-y-1">
-                      <p>• Layout: {gridLayout === 'grid' ? 'Grid View' : 'List View'}</p>
-                      <p>• Items per page: {itemsPerPage}</p>
-                      <p>• Visible fields: {Object.values(displayOptions).filter(Boolean).length} of {Object.keys(displayOptions).length}</p>
-                      <p>• Student ID: {displayOptions.showStudentId ? 'Visible' : 'Hidden'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-200">
-                  <button
-                    onClick={() => setShowSettingsModal(false)}
-                    className="px-4 py-2 bg-gray-300 rounded-lg hover:bg-gray-400"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={() => {
-                      // Save settings to localStorage for persistence
-                      localStorage.setItem('studentDisplaySettings', JSON.stringify({
-                        displayOptions,
-                        gridLayout,
-                        itemsPerPage
-                      }));
-                      toast({
-                        title: "Settings Saved",
-                        description: "Your display settings have been saved",
-                      });
-                      setShowSettingsModal(false);
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                  >
-                    Save Settings
-                  </button>
                 </div>
               </motion.div>
             </motion.div>

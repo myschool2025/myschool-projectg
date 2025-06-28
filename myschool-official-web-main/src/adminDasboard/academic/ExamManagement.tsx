@@ -7,8 +7,9 @@ import { useToast } from '@/hooks/use-toast';
 import html2pdf from 'html2pdf.js';
 // @ts-ignore
 import classesData from '@/lib/classes.json';
+import Spreadsheet from 'react-spreadsheet';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
 
 const CLASSES = (classesData as any[]).map(cls => cls.name);
 
@@ -44,6 +45,10 @@ const ResultsTable: React.FC<{
 }> = React.memo(({ parsedResults, loadingResults, onEditResult, onDeleteResult }) => {
   const isMobile = window.innerWidth < 768;
 
+  const filteredResults = parsedResults.filter(
+    r => r.studentId && r.studentName && r.class && r.exam
+  );
+
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full border text-xs sm:text-sm">
@@ -62,9 +67,9 @@ const ResultsTable: React.FC<{
         <tbody>
           {loadingResults ? (
             <tr><td colSpan={8} className="text-center py-4">Loading...</td></tr>
-          ) : parsedResults.length === 0 ? (
+          ) : filteredResults.length === 0 ? (
             <tr><td colSpan={8} className="text-center py-4">No results found.</td></tr>
-          ) : parsedResults.map(result => (
+          ) : filteredResults.map(result => (
             <tr key={result.id} className="hover:bg-gray-50">
               <td className="border px-2 py-1 font-mono">{result.studentId}</td>
               <td className="border px-2 py-1">{result.studentName}</td>
@@ -86,8 +91,8 @@ const ResultsTable: React.FC<{
                 <span className="inline-block bg-blue-100 text-blue-800 rounded px-2 py-0.5 font-bold">{result.rank}</span>
               </td>
               <td className="border px-2 py-1">
-                <Button variant="outline" size="sm" className="mr-2" onClick={() => onEditResult(result)}>Edit</Button>
-                <Button variant="destructive" size="sm" onClick={() => onDeleteResult(result.id)}>Delete</Button>
+                <Button size="sm" className="mr-2" onClick={() => { onEditResult(result); }}>Edit</Button>
+                <Button size="sm" variant="destructive" onClick={() => { onDeleteResult(result.id); }}>Delete</Button>
               </td>
             </tr>
           ))}
@@ -125,6 +130,13 @@ const ExamManagement: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const resultsPerPage = 10;
+  const [showResultModal, setShowResultModal] = useState(false);
+  const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
+  const [modalResult, setModalResult] = useState<ResultRow | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [user, setUser] = useState<any>(null);
+  const [isAddingNewExam, setIsAddingNewExam] = useState(false);
 
   // Fetch configs
   useEffect(() => {
@@ -156,11 +168,10 @@ const ExamManagement: React.FC = () => {
 
   // Update available exams
   useEffect(() => {
-    const exams = configs.filter(cfg => cfg.class === selectedClass || cfg.class === resultClass).map(cfg => cfg.exam);
+    const exams = configs.filter(cfg => cfg.class === selectedClass).map(cfg => cfg.exam);
     setAvailableExams([...new Set(exams)]);
     if (!exams.includes(selectedExam)) setSelectedExam('');
-    if (!exams.includes(resultExam)) setResultExam('');
-  }, [selectedClass, resultClass, configs]);
+  }, [selectedClass, configs]);
 
   // Update available subjects
   useEffect(() => {
@@ -178,28 +189,28 @@ const ExamManagement: React.FC = () => {
   const fetchResults = useCallback(async () => {
     setLoadingResults(true);
     try {
-      const params: Record<string, string> = {
-        page: currentPage.toString(),
-        limit: resultsPerPage.toString(),
-      };
-      if (resultClass) params.class = resultClass;
-      if (resultExam) params.exam = resultExam;
+      const params: Record<string, string> = {};
+      if (resultClass && resultClass !== '') params.class = resultClass;
+      if (resultExam && resultExam !== '') params.exam = resultExam;
       const res = await axios.get(`${BACKEND_URL}/results`, { params });
       setResults(res.data.results || []);
-      setTotalPages(Math.ceil((res.data.total || 0) / resultsPerPage));
-    } catch {
+      setTotalPages(1); // No pagination, show all
+      console.log('[DEBUG] Results fetched:', res.data.results);
+    } catch (err) {
       setResults([]);
       setTotalPages(1);
+      console.error('[DEBUG] Error fetching results:', err);
     } finally {
       setLoadingResults(false);
     }
-  }, [currentPage, resultClass, resultExam]);
+  }, [resultClass, resultExam]);
 
   useEffect(() => {
     if (tab === 'results') {
+      console.log('[DEBUG] Results tab loaded. resultClass:', resultClass, 'resultExam:', resultExam);
       fetchResults();
     }
-  }, [tab, fetchResults]);
+  }, [tab, fetchResults, resultClass, resultExam]);
 
   const handleAddSubject = () => {
     if (subjectInput && !subjects.includes(subjectInput)) {
@@ -435,6 +446,74 @@ const ExamManagement: React.FC = () => {
 
   const dynamicSubjects = availableSubjects.length > 0 ? availableSubjects : customSubjects;
 
+  useEffect(() => {
+    // Fetch user for role-based UI
+    import('@/lib/auth').then(mod => mod.getCurrentUser().then(setUser).catch(() => setUser(null)));
+  }, []);
+
+  // Handler to open add modal
+  const openAddModal = () => {
+    setModalMode('add');
+    setModalResult(null);
+    setShowResultModal(true);
+  };
+  // Handler to open edit modal
+  const openEditModal = (result: ResultRow) => {
+    setModalMode('edit');
+    setModalResult(result);
+    setShowResultModal(true);
+  };
+  // Handler to open delete confirm
+  const openDeleteConfirm = (id: string) => {
+    setDeleteId(id);
+    setShowDeleteConfirm(true);
+  };
+  // Handler to close modals
+  const closeModals = () => {
+    setShowResultModal(false);
+    setShowDeleteConfirm(false);
+    setModalResult(null);
+    setDeleteId(null);
+  };
+
+  // Handler for add/edit submit
+  const handleResultSubmit = async (data: Partial<ResultRow>) => {
+    setIsSubmitting(true);
+    try {
+      if (modalMode === 'add') {
+        await axios.post(`${BACKEND_URL}/results`, data);
+        toast({ title: 'Result added!' });
+      } else if (modalMode === 'edit' && modalResult?.id) {
+        await axios.put(`${BACKEND_URL}/results/${modalResult.id}`, data);
+        toast({ title: 'Result updated!' });
+      }
+      closeModals();
+      fetchResults();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err?.response?.data?.error || 'Failed to save result.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  // Handler for delete
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setIsSubmitting(true);
+    try {
+      await axios.delete(`${BACKEND_URL}/results/${deleteId}`);
+      toast({ title: 'Result deleted!' });
+      closeModals();
+      fetchResults();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err?.response?.data?.error || 'Failed to delete result.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Place filteredResults declaration just before the return statement, outside of any function
+  const filteredResults = results.filter(r => r.studentId && r.studentName && r.class && r.exam);
+
   return (
     <div className="p-4 max-w-7xl mx-auto">
       <div className="flex gap-2 mb-4">
@@ -461,7 +540,20 @@ const ExamManagement: React.FC = () => {
             </div>
             <div className="flex-1 min-w-[140px]">
               <label className="block text-sm font-medium mb-1">Exam Name</label>
-              <Input value={examName} onChange={e => setExamName(e.target.value)} placeholder="Exam name" className="w-full" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">{isAddingNewExam ? (examName || 'Enter new exam name') : (examName || 'Select Exam')}</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  {availableExams.map(exam => (
+                    <DropdownMenuItem key={exam} onClick={() => { setExamName(exam); setIsAddingNewExam(false); }}>{exam}</DropdownMenuItem>
+                  ))}
+                  <DropdownMenuItem onClick={() => { setExamName(''); setIsAddingNewExam(true); }}>+ Add new</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {isAddingNewExam && (
+                <Input value={examName} onChange={e => setExamName(e.target.value)} placeholder="New exam name" className="w-full mt-2" />
+              )}
             </div>
           </div>
           <div className="mb-4">
@@ -529,35 +621,37 @@ const ExamManagement: React.FC = () => {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              {selectedClass && (
-                <div className="flex-1 min-w-[180px]">
-                  <label className="block text-sm font-medium mb-1">Student</label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline">{selectedStudent ? selectedStudent.name : 'Select Student'}</Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="max-h-60 overflow-y-auto w-56">
-                      {students.map(student => (
-                        <DropdownMenuItem key={student.id} onClick={() => handleStudentSelect(student)}>
-                          {student.name} <span className="ml-2 text-xs text-muted-foreground">({student.class})</span>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              )}
+              <div className="flex-1 min-w-[180px]">
+                <label className="block text-sm font-medium mb-1">Student</label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" disabled={!selectedClass}>{selectedStudent ? selectedStudent.name : 'Select Student'}</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="max-h-60 overflow-y-auto w-56">
+                    {students.map(student => (
+                      <DropdownMenuItem key={student.id} onClick={() => handleStudentSelect(student)}>
+                        {student.name} <span className="ml-2 text-xs text-muted-foreground">({student.class})</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               <div className="flex-1 min-w-[140px]">
                 <label className="block text-sm font-medium mb-1">Exam</label>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline">{selectedExam || 'Select Exam'}</Button>
+                    <Button variant="outline" disabled={!selectedStudent}>{selectedExam || 'Select Exam'}</Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent>
                     {availableExams.map(exam => (
                       <DropdownMenuItem key={exam} onClick={() => setSelectedExam(exam)}>{exam}</DropdownMenuItem>
                     ))}
+                    <DropdownMenuItem onClick={() => setIsAddingNewExam(true)}>+ Add new</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                {isAddingNewExam && (
+                  <Input value={selectedExam} onChange={e => setSelectedExam(e.target.value)} placeholder="New exam name" className="w-full mt-2" />
+                )}
               </div>
             </div>
             <div className="flex flex-wrap gap-4 mb-4">
@@ -611,14 +705,14 @@ const ExamManagement: React.FC = () => {
           <div className="flex flex-col sm:flex-row gap-2 mb-4">
             <div className="flex-1 min-w-[140px]">
               <label className="block text-sm font-medium mb-1">Class</label>
-              <select value={resultClass} onChange={e => { setResultClass(e.target.value); setResultExam(''); setCurrentPage(1); }} className="w-full border rounded p-2">
+              <select value={resultClass} onChange={e => { setResultClass(e.target.value); setResultExam(''); }} className="w-full border rounded p-2">
                 <option value="">All Classes</option>
                 {CLASSES.map((cls, index) => <option key={index} value={cls}>{cls}</option>)}
               </select>
             </div>
             <div className="flex-1 min-w-[140px]">
               <label className="block text-sm font-medium mb-1">Exam</label>
-              <select value={resultExam} onChange={e => { setResultExam(e.target.value); setCurrentPage(1); }} className="w-full border rounded p-2" disabled={!resultClass}>
+              <select value={resultExam} onChange={e => { setResultExam(e.target.value); }} className="w-full border rounded p-2" disabled={!resultClass}>
                 <option value="">All Exams</option>
                 {availableExams.map((exam, index) => <option key={index} value={exam}>{exam}</option>)}
               </select>
@@ -629,15 +723,14 @@ const ExamManagement: React.FC = () => {
               <span className="font-semibold">Results</span>
               <Button
                 type="button"
-                className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-                onClick={() => generateResultsPDF(results)}
-                disabled={results.length === 0}
+                className="bg-green-600 text-white px-4 py-2 rounded"
+                onClick={() => setTab('result')}
               >
-                Download PDF
+                Add Result
               </Button>
             </div>
             <ResultsTable
-              parsedResults={results}
+              parsedResults={filteredResults}
               loadingResults={loadingResults}
               onEditResult={handleEditResult}
               onDeleteResult={handleDeleteResult}

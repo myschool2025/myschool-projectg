@@ -56,6 +56,7 @@ export const AdminLayout = () => {
         { path: '/admin/staff', label: 'Staff Management', icon: <School className="h-4 w-4" /> },
         { path: '/admin/exam-management', label: 'Exam Management', icon: <FileText className="h-4 w-4" /> },
         { path: '/admin/school-result', label: 'School Result', icon: <BarChart3 className="h-4 w-4" /> },
+        { path: '/admin/cards-certificates', label: 'Cards & Certificates', icon: <FileText className="h-4 w-4" /> },
       ]
     },
     {

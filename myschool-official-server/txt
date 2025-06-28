@@ -1,4 +1,3 @@
-For Update bulk maketing lead status :curl.exe -X POST https://myschool-official-server-sage.vercel.app/marketing-leads/bulk-update-status
 
 import 'dotenv/config';
 import express from 'express';

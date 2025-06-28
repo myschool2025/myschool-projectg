@@ -1,143 +1,129 @@
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
-import winston from 'winston';
+import { GoogleSpreadsheet } from 'google-spreadsheet';
+import { JWT } from 'google-auth-library';
+import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 import admin from 'firebase-admin';
-import fs from 'fs';
 
+// --------------------
+// ✅ 1️⃣ ENV check
+// --------------------
+const requiredEnvVars = [
+  'FIREBASE_SERVICE_ACCOUNT_BASE64',
+  'GOOGLE_SERVICE_ACCOUNT_EMAIL',
+  'GOOGLE_PRIVATE_KEY',
+  'GOOGLE_SHEET_ID',
+  'BULKSMSBD_API_KEY',
+  'BULKSMSBD_SENDER_ID',
+  'PORT'
+];
 
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`❌ Missing environment variable: ${envVar}`);
+    throw new Error(`Missing environment variable: ${envVar}`);
+  }
+}
 
-// Winston logger setup
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.simple()
-  ),
-  transports: [
-    new winston.transports.Console(),
-  ],
-});
-
-let serviceAccount;
+// --------------------
+// ✅ 2️⃣ Firebase init
+// --------------------
 try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  } else {
-    const serviceAccountFile = fs.readFileSync('./firebase-service-account.json', 'utf8');
-    serviceAccount = JSON.parse(serviceAccountFile);
+  const base64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+  const decoded = Buffer.from(base64, 'base64').toString('utf8');
+  const firebaseServiceAccount = JSON.parse(decoded);
+  firebaseServiceAccount.private_key = firebaseServiceAccount.private_key.replace(/\\n/g, '\n');
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(firebaseServiceAccount),
+    });
+    console.log('✅ Firebase Admin initialized');
   }
-  if (serviceAccount.private_key) {
-    serviceAccount.private_key = serviceAccount.private_key.replace(/\n/g, '\n');
-  }
-} catch (error) {
-  logger.error('Error loading Firebase service account:', error);
-  throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT configuration');
+} catch (err) {
+  console.error('❌ Failed to initialize Firebase Admin:', err.message);
+  throw err;
 }
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-}
+
+const db = admin.firestore();
+
+// --------------------
+// ✅ 3️⃣ Express setup
+// --------------------
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-const allowedOrigins = ['http://localhost:8080', 'https://myschool-offical.netlify.app'];
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type'],
-  })
-);
-app.use(express.json());
-app.use(helmet());
-app.use(compression());
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
+// ✅ Proper CORS configuration
+app.use((req, res, next) => {
+  // Allow all origins for development
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
 
-// Health check endpoint
-app.get('/health', (req, res) => res.send('OK'));
-
-
-// Root Endpoint
-app.get('/', (_, res) => {
-  res.send('MySchool-Official Node.js Server is Running!');
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
 });
 
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false
+}));
+app.use(compression());
+app.use(rateLimit({ 
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.'
+}));
 
-
-
-
-// Google Sheets Authentication
+// --------------------
+// ✅ 4️⃣ Google Sheets
+// --------------------
 const serviceAccountAuth = new JWT({
   email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
-const doc = new GoogleSpreadsheet('1VEhRX6LRlYKLAJsKGUNz56xr6SxMAZUpt5tDmtpMSF8', serviceAccountAuth);
-
-// Initialize Google Sheets API
-async function initializeDoc() {
-  try {
-    await doc.loadInfo();
-    console.log('Google Spreadsheet initialized successfully');
-  } catch (error) {
-    console.error('Error initializing Google Spreadsheet:', error);
-    throw error;
-  }
+async function initDoc() {
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID, serviceAccountAuth);
+  await doc.loadInfo();
+  console.log('✅ Google Spreadsheet initialized');
+  return doc;
 }
 
 // Sheet Initialization Functions
 async function initializeTransactionSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[0]; // Transactions sheet
-  if (!sheet) {
-    throw new Error('Transactions sheet not found at index 0');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[0];
+  if (!sheet) throw new Error('Transactions sheet not found at index 0');
   await sheet.setHeaderRow(['ID', 'Date', 'Description', 'Amount', 'Type', 'Category']);
   return sheet;
 }
 
 async function initializeStudentSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[1]; // Students sheet
-  if (!sheet) {
-    throw new Error('Students sheet not found at index 1');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[1];
+  if (!sheet) throw new Error('Students sheet not found at index 1');
   await sheet.setHeaderRow(['ID', 'Name', 'Class', 'Number', 'Description', 'English Name', 'Mother Name', 'Father Name', 'Photo URL', 'Academic Year', 'Section', 'Shift']);
   return sheet;
 }
 
 async function initializeMarketingLeadsSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[2]; // Marketing Leads sheet (index 2)
-  if (!sheet) {
-    throw new Error('Marketing Leads sheet not found at index 2');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[2];
+  if (!sheet) throw new Error('Marketing Leads sheet not found at index 2');
   const headerValues = [
-    'ID',
-    'Name',
-    'Class',
-    'Number',
-    'Description',
-    'English Name',
-    'Mother Name',
-    'Father Name',
-    'Photo URL',
-    'Academic Year',
-    'Section',
-    'Shift',
-    'Status',
+    'ID', 'Name', 'Class', 'Number', 'Description', 'English Name', 'Mother Name', 'Father Name', 'Photo URL', 'Academic Year', 'Section', 'Shift', 'Status',
   ];
   await sheet.setHeaderRow(headerValues);
   console.log('Set Marketing Leads sheet headers:', headerValues);
@@ -145,20 +131,11 @@ async function initializeMarketingLeadsSheet() {
 }
 
 async function initializeFeeSettingsSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[3]; // FeeSettings sheet (index 3)
-  if (!sheet) {
-    throw new Error('FeeSettings sheet not found at index 3');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[3];
+  if (!sheet) throw new Error('FeeSettings sheet not found at index 3');
   const headerValues = [
-    'Fee ID',
-    'Fee Type',
-    'Classes',
-    'Description',
-    'Amount',
-    'Active From',
-    'Active To',
-    'Can Override',
+    'Fee ID', 'Fee Type', 'Classes', 'Description', 'Amount', 'Active From', 'Active To', 'Can Override',
   ];
   await sheet.setHeaderRow(headerValues);
   console.log('Set FeeSettings sheet headers:', headerValues);
@@ -166,18 +143,11 @@ async function initializeFeeSettingsSheet() {
 }
 
 async function initializeCustomStudentFeesSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[4]; // CustomStudentFees sheet (index 4)
-  if (!sheet) {
-    throw new Error('CustomStudentFees sheet not found at index 4');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[4];
+  if (!sheet) throw new Error('CustomStudentFees sheet not found at index 4');
   const headerValues = [
-    'Student ID',
-    'Fee ID',
-    'New Amount',
-    'Effective From',
-    'Active',
-    'Reason',
+    'Student ID', 'Fee ID', 'New Amount', 'Effective From', 'Active', 'Reason',
   ];
   await sheet.setHeaderRow(headerValues);
   console.log('Set CustomStudentFees sheet headers:', headerValues);
@@ -185,143 +155,75 @@ async function initializeCustomStudentFeesSheet() {
 }
 
 async function initializeFeeCollectionsSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[5]; // FeeCollections sheet (index 5)
-  if (!sheet) {
-    throw new Error('FeeCollections sheet not found at index 5');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[5];
+  if (!sheet) throw new Error('FeeCollections sheet not found at index 5');
   const headerValues = [
-    'Collection ID',
-    'Date',
-    'Student ID',
-    'Fee ID',
-    'Month',
-    'Year',
-    'Quantity',
-    'Amount Paid',
-    'Payment Method',
-    'Description',
+    'Collection ID', 'Date', 'Student ID', 'Fee ID', 'Month', 'Year', 'Quantity', 'Amount Paid', 'Payment Method', 'Description',
   ];
   await sheet.setHeaderRow(headerValues);
   console.log('Set FeeCollections sheet headers:', headerValues);
   return sheet;
 }
 
-// Initialize Results Sheet
 async function initializeResultsSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[6]; // index 6 = 7th sheet (adjust as needed)
-  if (!sheet) {
-    throw new Error('Results sheet not found at index 6');
-  }
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[6];
+  if (!sheet) throw new Error('Results sheet not found at index 6');
   await sheet.setHeaderRow([
-    'ID',
-    'Student ID',
-    'Student Name',
-    'Class',
-    'Exam',
-    'Subjects', // JSON string
-    'Total',
-    'Rank'
+    'ID', 'Student ID', 'Student Name', 'Class', 'Exam', 'Subjects', 'Total', 'Rank',
   ]);
   return sheet;
 }
 
-// Function to generate the next student ID
-async function generateStudentId() {
-  const idRef = db.collection('metadata').doc('studentIdCounter');
-  return db.runTransaction(async (transaction) => {
-    const doc = await transaction.get(idRef);
-    let lastId = 2500000; // Starting ID: 2500001
-    if (doc.exists) {
-      lastId = doc.data().lastId;
-    }
-    const newId = lastId + 1;
-    transaction.set(idRef, { lastId: newId });
-    return newId.toString(); // e.g., "2500001"
-  });
+async function initializeExamConfigsSheet() {
+  const doc = await initDoc();
+  const sheet = doc.sheetsByIndex[7];
+  if (!sheet) throw new Error('Exam Configs sheet not found at index 7');
+  await sheet.setHeaderRow(['ID', 'Class', 'Exam', 'Subjects']);
+  return sheet;
 }
 
-// Function to generate the next fee ID
-async function generateFeeId() {
-  const idRef = db.collection('metadata').doc('feeIdCounter');
-  return db.runTransaction(async (transaction) => {
-    const doc = await transaction.get(idRef);
-    let lastId = 0; // Starting ID: F001
-    if (doc.exists) {
-      lastId = doc.data().lastId;
+// Generate student ID
+async function generateStudentIdFromSheet(sheet) {
+  const MAX_RETRIES = 5;
+  const rows = await sheet.getRows();
+  const existingIds = new Set(rows.map(row => row.get('ID')));
+
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    const id = Math.floor(1000000 + Math.random() * 9000000).toString(); // 7-digit
+    if (!existingIds.has(id)) {
+      return id;
     }
-    const newId = lastId + 1;
-    transaction.set(idRef, { lastId: newId });
-    return `F${newId.toString().padStart(3, '0')}`; // e.g., "F001"
-  });
+  }
+
+  throw new Error('❌ Failed to generate a unique student ID after several retries');
 }
 
-// Function to generate the next collection ID
-async function generateCollectionId() {
-  const idRef = db.collection('metadata').doc('collectionIdCounter');
-  return db.runTransaction(async (transaction) => {
-    const doc = await transaction.get(idRef);
-    let lastId = 0; // Starting ID: C00001
-    if (doc.exists) {
-      lastId = doc.data().lastId;
-    }
-    const newId = lastId + 1;
-    transaction.set(idRef, { lastId: newId });
-    return `C${newId.toString().padStart(5, '0')}`; // e.g., "C00001"
-  });
-}
-
-// Helper to get subjects for a class/exam
+// Get subjects for class/exam
 async function getSubjectsForClassExam(className, examName) {
   const examSheet = await initializeExamConfigsSheet();
   const rows = await examSheet.getRows();
-  const config = rows.find(row =>
-    row.get('Class') === className && row.get('Exam') === examName
-  );
+  const config = rows.find(row => row.get('Class') === className && row.get('Exam') === examName);
   if (!config) return [];
   return (config.get('Subjects') || '').split(',').map(s => s.trim()).filter(Boolean);
 }
-
-// =========================
-// Auth & User Management
-// =========================
-// ... (user endpoints: /users, authentication, etc.)
-
-// =========================
-// Students
-// =========================
-// ... (student endpoints: /students, /students/export-csv, etc.)
-
-// =========================
-// Marketing Leads
-// =========================
-// ... (marketing endpoints: /marketing-leads, /marketing-leads-analysis, /marketing-leads-report, etc.)
-
-// =========================
-// Fee Settings & Collections
-// =========================
-// ... (fee endpoints: /fee-settings, /custom-student-fees, /fee-collections, /fee-analysis, /fee-reports, etc.)
-
-// =========================
-// Results & Exams
-// =========================
-// ... (results/exam endpoints: /results, /exam-configs, etc.)
-
-// =========================
-// Transactions
-// =========================
-// ... (transaction endpoints: /transactions, etc.)
-
-// =========================
-// Utility & Miscellaneous
-// =========================
-// ... (utility endpoints, root, SMS, etc.)
 
 // Root Endpoint
 app.get('/', (_, res) => {
   res.send('MySchool-Official Node.js Server is Running!');
 });
+
+// Health Check Endpoint
+app.get('/health', (_, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    message: 'MySchool-Official Node.js Server is Running!'
+  });
+});
+
 
 // SMS Service Endpoints
 app.post('/sendSMS', async (req, res) => {
@@ -347,7 +249,7 @@ app.post('/sendSMS', async (req, res) => {
 });
 
 app.get('/getBalance', async (_, res) => {
-  const apiKey = process.env.BULKSMSBD_API_KEY || 'W7QHhND7D6gKbyld31Pq';
+  const apiKey = process.env.BULKSMSBD_API_KEY;
   const url = `http://bulksmsbd.net/api/getBalanceApi?api_key=${apiKey}`;
   try {
     const response = await axios.get(url);
@@ -594,7 +496,7 @@ app.delete('/transactions/:id', async (req, res) => {
     console.error('Error deleting transaction:', error);
     res.status(500).json({ error: 'Failed to delete transaction', details: error.message });
   }
-}); 
+});
 
 // Student Endpoints
 app.get('/students', async (req, res) => {
@@ -642,14 +544,14 @@ app.get('/students', async (req, res) => {
 
 app.post('/students', async (req, res) => {
   try {
-    const { 
-      name, 
-      class: studentClass, 
-      number, 
-      description, 
-      englishName, 
-      motherName, 
-      fatherName, 
+    const {
+      name,
+      class: studentClass,
+      number,
+      description,
+      englishName,
+      motherName,
+      fatherName,
       photoUrl,
       academicYear,
       section,
@@ -661,7 +563,9 @@ app.post('/students', async (req, res) => {
     }
 
     const sheet = await initializeStudentSheet();
-    const id = uuidv4();
+
+    // Use the new function to generate a random 7-digit ID
+    const id = await generateStudentIdFromSheet(sheet);
 
     await sheet.addRow({
       ID: id,
@@ -680,15 +584,15 @@ app.post('/students', async (req, res) => {
 
     res.status(201).json({
       message: 'Student added successfully',
-      student: { 
-        id, 
-        name, 
-        class: studentClass, 
-        number, 
-        description, 
-        englishName, 
-        motherName, 
-        fatherName, 
+      student: {
+        id,
+        name,
+        class: studentClass,
+        number,
+        description,
+        englishName,
+        motherName,
+        fatherName,
         photoUrl,
         academicYear,
         section,
@@ -701,17 +605,18 @@ app.post('/students', async (req, res) => {
   }
 });
 
+
 app.put('/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      name, 
-      class: studentClass, 
-      number, 
-      description, 
-      englishName, 
-      motherName, 
-      fatherName, 
+    const {
+      name,
+      class: studentClass,
+      number,
+      description,
+      englishName,
+      motherName,
+      fatherName,
       photoUrl,
       academicYear,
       section,
@@ -745,15 +650,15 @@ app.put('/students/:id', async (req, res) => {
 
     res.json({
       message: 'Student updated successfully',
-      student: { 
-        id, 
-        name, 
-        class: studentClass, 
-        number, 
-        description, 
-        englishName, 
-        motherName, 
-        fatherName, 
+      student: {
+        id,
+        name,
+        class: studentClass,
+        number,
+        description,
+        englishName,
+        motherName,
+        fatherName,
         photoUrl,
         academicYear,
         section,
@@ -1399,7 +1304,7 @@ app.post('/fee-settings', async (req, res) => {
     }
 
     const sheet = await initializeFeeSettingsSheet();
-    const feeId = await generateFeeId();
+    const feeId = uuidv4();
 
     await sheet.addRow({
       'Fee ID': feeId,
@@ -1539,8 +1444,8 @@ app.post('/custom-student-fees', async (req, res) => {
     const { studentId, feeId, newAmount, effectiveFrom, active, reason } = req.body;
 
     if (!studentId || !feeId || !newAmount || !effectiveFrom) {
-      return res.status(400).json({ 
-        error: 'Student ID, Fee ID, New Amount, and Effective From are required' 
+      return res.status(400).json({
+        error: 'Student ID, Fee ID, New Amount, and Effective From are required'
       });
     }
 
@@ -1578,15 +1483,15 @@ app.put('/custom-student-fees/:studentId/:feeId', async (req, res) => {
     const { newAmount, effectiveFrom, active, reason } = req.body;
 
     if (!newAmount || !effectiveFrom) {
-      return res.status(400).json({ 
-        error: 'New Amount and Effective From are required' 
+      return res.status(400).json({
+        error: 'New Amount and Effective From are required'
       });
     }
 
     const sheet = await initializeCustomStudentFeesSheet();
     const rows = await sheet.getRows();
 
-    const row = rows.find(r => 
+    const row = rows.find(r =>
       r.get('Student ID') === studentId && r.get('Fee ID') === feeId
     );
     if (!row) {
@@ -1623,7 +1528,7 @@ app.delete('/custom-student-fees/:studentId/:feeId', async (req, res) => {
     const sheet = await initializeCustomStudentFeesSheet();
     const rows = await sheet.getRows();
 
-    const rowIndex = rows.findIndex(r => 
+    const rowIndex = rows.findIndex(r =>
       r.get('Student ID') === studentId && r.get('Fee ID') === feeId
     );
     if (rowIndex === -1) {
@@ -1688,26 +1593,27 @@ app.get('/fee-collections', async (req, res) => {
 
 app.post('/fee-collections', async (req, res) => {
   try {
-    const { 
-      date, 
-      studentId, 
-      feeId, 
-      month, 
-      year, 
-      quantity, 
-      amountPaid, 
-      paymentMethod, 
-      description 
+    const {
+      date,
+      studentId,
+      feeId,
+      month,
+      year,
+      quantity,
+      amountPaid,
+      paymentMethod,
+      description
     } = req.body;
 
     if (!date || !studentId || !feeId || !amountPaid || !paymentMethod) {
-      return res.status(400).json({ 
-        error: 'Date, Student ID, Fee ID, Amount Paid, and Payment Method are required' 
+      return res.status(400).json({
+        error: 'Date, Student ID, Fee ID, Amount Paid, and Payment Method are required'
       });
     }
 
     const sheet = await initializeFeeCollectionsSheet();
-    const collectionId = await generateCollectionId();
+    const collectionId = uuidv4();
+
 
     await sheet.addRow({
       'Collection ID': collectionId,
@@ -1746,21 +1652,21 @@ app.post('/fee-collections', async (req, res) => {
 app.put('/fee-collections/:collectionId', async (req, res) => {
   try {
     const { collectionId } = req.params;
-    const { 
-      date, 
-      studentId, 
-      feeId, 
-      month, 
-      year, 
-      quantity, 
-      amountPaid, 
-      paymentMethod, 
-      description 
+    const {
+      date,
+      studentId,
+      feeId,
+      month,
+      year,
+      quantity,
+      amountPaid,
+      paymentMethod,
+      description
     } = req.body;
 
     if (!date || !studentId || !feeId || !amountPaid || !paymentMethod) {
-      return res.status(400).json({ 
-        error: 'Date, Student ID, Fee ID, Amount Paid, and Payment Method are required' 
+      return res.status(400).json({
+        error: 'Date, Student ID, Fee ID, Amount Paid, and Payment Method are required'
       });
     }
 
@@ -1834,7 +1740,7 @@ app.get('/fee-analysis/:studentId', async (req, res) => {
     const studentSheet = await initializeStudentSheet();
     const studentRows = await studentSheet.getRows();
     const student = studentRows.find(row => row.get('ID') === studentId);
-    
+
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
     }
@@ -1896,7 +1802,7 @@ app.get('/fee-analysis/:studentId', async (req, res) => {
     const feeSummary = applicableFees.map(fee => {
       const customFee = customFees.find(cf => cf.feeId === fee.feeId);
       const actualAmount = customFee ? customFee.newAmount : fee.defaultAmount;
-      
+
       const collectionsForFee = studentCollections.filter(c => c.feeId === fee.feeId);
       const totalPaid = collectionsForFee.reduce((sum, c) => sum + c.amountPaid, 0);
       const dueAmount = actualAmount - totalPaid;
@@ -2012,7 +1918,7 @@ app.get('/fee-reports', async (req, res) => {
     // Calculate statistics
     const totalCollections = collections.length;
     const totalAmount = collections.reduce((sum, c) => sum + c.amountPaid, 0);
-    
+
     const paymentMethodStats = collections.reduce((acc, c) => {
       acc[c.paymentMethod] = (acc[c.paymentMethod] || 0) + c.amountPaid;
       return acc;
@@ -2195,7 +2101,10 @@ app.post('/exam-configs', async (req, res) => {
 // GET /results
 app.get('/results', async (req, res) => {
   try {
-    const { id, name, class: className, exam } = req.query;
+    const { id, name, class: className, exam, page = 0, limit = 10 } = req.query;
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    
     const sheet = await initializeResultsSheet();
     const rows = await sheet.getRows();
     let results = rows.map(row => {
@@ -2203,7 +2112,14 @@ app.get('/results', async (req, res) => {
       try {
         subjectsObj = JSON.parse(row.get('Subjects') || '{}');
       } catch (e) {
-        subjectsObj = {};
+        // Fallback to comma-separated format if JSON parsing fails
+        const subjectsStr = row.get('Subjects') || '';
+        if (subjectsStr.includes(':')) {
+          subjectsStr.split(',').forEach(pair => {
+            const [sub, mark] = pair.split(':').map(s => s.trim());
+            if (sub && mark) subjectsObj[sub] = mark;
+          });
+        }
       }
       return {
         id: row.get('ID') || '',
@@ -2216,11 +2132,25 @@ app.get('/results', async (req, res) => {
         rank: row.get('Rank') || ''
       };
     });
+    
+    // Apply filters
     if (id) results = results.filter(r => r.id === id);
-    if (name) results = results.filter(r => r.studentName && r.studentName.includes(name));
+    if (name) results = results.filter(r => r.studentName && r.studentName.toLowerCase().includes(name.toLowerCase()));
     if (className) results = results.filter(r => r.class === className);
     if (exam) results = results.filter(r => r.exam === exam);
-    res.json({ results });
+    
+    // Apply pagination
+    const total = results.length;
+    const start = pageNum * limitNum;
+    const paginatedResults = results.slice(start, start + limitNum);
+    
+    res.json({ 
+      results: paginatedResults,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
   } catch (error) {
     console.error('Error fetching results:', error);
     res.status(500).json({ error: 'Failed to fetch results', details: error.message });
@@ -2231,23 +2161,60 @@ app.get('/results', async (req, res) => {
 app.post('/results', async (req, res) => {
   try {
     const { studentId, studentName, class: className, exam, subjects, total, rank } = req.body;
-    if (!studentId || !studentName || !className || !exam || !subjects || typeof subjects !== 'object') {
-      return res.status(400).json({ error: 'Missing required fields or invalid subjects' });
+    
+    // Enhanced validation
+    if (!studentId || !studentName || !className || !exam) {
+      return res.status(400).json({ 
+        error: 'Missing required fields', 
+        details: 'Student ID, Student Name, Class, and Exam are required' 
+      });
     }
+    
+    if (!subjects || typeof subjects !== 'object') {
+      return res.status(400).json({ 
+        error: 'Invalid subjects data', 
+        details: 'Subjects must be an object with subject names as keys and marks as values' 
+      });
+    }
+    
+    // Validate subjects data
+    const validSubjects = {};
+    for (const [subject, mark] of Object.entries(subjects)) {
+      if (subject && mark && !isNaN(Number(mark)) && Number(mark) >= 0 && Number(mark) <= 100) {
+        validSubjects[subject] = mark.toString();
+      }
+    }
+    
+    // Validate total and rank
+    const validatedTotal = total && !isNaN(Number(total)) ? total.toString() : '';
+    const validatedRank = rank && !isNaN(Number(rank)) ? rank.toString() : '';
+    
     const sheet = await initializeResultsSheet();
     const id = uuidv4();
     const rowData = {
       ID: id,
-      'Student ID': studentId,
-      'Student Name': studentName,
-      Class: className,
-      Exam: exam,
-      Subjects: JSON.stringify(subjects),
-      Total: total || '',
-      Rank: rank || ''
+      'Student ID': studentId.toString().trim(),
+      'Student Name': studentName.toString().trim(),
+      Class: className.toString().trim(),
+      Exam: exam.toString().trim(),
+      Subjects: JSON.stringify(validSubjects),
+      Total: validatedTotal,
+      Rank: validatedRank
     };
     await sheet.addRow(rowData);
-    res.status(201).json({ message: 'Result added', result: { id, studentId, studentName, class: className, exam, subjects, total, rank } });
+    res.status(201).json({ 
+      message: 'Result added successfully', 
+      result: { 
+        id, 
+        studentId: rowData['Student ID'], 
+        studentName: rowData['Student Name'], 
+        class: rowData.Class, 
+        exam: rowData.Exam, 
+        subjects: validSubjects, 
+        total: validatedTotal, 
+        rank: validatedRank 
+      } 
+    });
   } catch (error) {
     console.error('Error adding result:', error);
     res.status(500).json({ error: 'Failed to add result', details: error.message });
@@ -2259,24 +2226,63 @@ app.put('/results/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { studentId, studentName, class: className, exam, subjects, total, rank } = req.body;
-    if (!studentId || !studentName || !className || !exam || !subjects || typeof subjects !== 'object') {
-      return res.status(400).json({ error: 'Missing required fields or invalid subjects' });
+    
+    // Enhanced validation
+    if (!studentId || !studentName || !className || !exam) {
+      return res.status(400).json({ 
+        error: 'Missing required fields', 
+        details: 'Student ID, Student Name, Class, and Exam are required' 
+      });
     }
+    
+    if (!subjects || typeof subjects !== 'object') {
+      return res.status(400).json({ 
+        error: 'Invalid subjects data', 
+        details: 'Subjects must be an object with subject names as keys and marks as values' 
+      });
+    }
+    
     const sheet = await initializeResultsSheet();
     const rows = await sheet.getRows();
     const row = rows.find(r => r.get('ID') === id);
     if (!row) {
       return res.status(404).json({ error: 'Result not found' });
     }
-    row.set('Student ID', studentId);
-    row.set('Student Name', studentName);
-    row.set('Class', className);
-    row.set('Exam', exam);
-    row.set('Subjects', JSON.stringify(subjects));
-    row.set('Total', total || '');
-    row.set('Rank', rank || '');
+    
+    // Validate subjects data
+    const validSubjects = {};
+    for (const [subject, mark] of Object.entries(subjects)) {
+      if (subject && mark && !isNaN(Number(mark)) && Number(mark) >= 0 && Number(mark) <= 100) {
+        validSubjects[subject] = mark.toString();
+      }
+    }
+    
+    // Validate total and rank
+    const validatedTotal = total && !isNaN(Number(total)) ? total.toString() : '';
+    const validatedRank = rank && !isNaN(Number(rank)) ? rank.toString() : '';
+    
+    row.set('Student ID', studentId.toString().trim());
+    row.set('Student Name', studentName.toString().trim());
+    row.set('Class', className.toString().trim());
+    row.set('Exam', exam.toString().trim());
+    row.set('Subjects', JSON.stringify(validSubjects));
+    row.set('Total', validatedTotal);
+    row.set('Rank', validatedRank);
     await row.save();
-    res.json({ message: 'Result updated', result: { id, studentId, studentName, class: className, exam, subjects, total, rank } });
+    
+    res.json({ 
+      message: 'Result updated successfully', 
+      result: { 
+        id, 
+        studentId: studentId.toString().trim(), 
+        studentName: studentName.toString().trim(), 
+        class: className.toString().trim(), 
+        exam: exam.toString().trim(), 
+        subjects: validSubjects, 
+        total: validatedTotal, 
+        rank: validatedRank 
+      } 
+    });
   } catch (error) {
     console.error('Error updating result:', error);
     res.status(500).json({ error: 'Failed to update result', details: error.message });
@@ -2300,62 +2306,23 @@ app.delete('/results/:id', async (req, res) => {
   }
 });
 
-// Add missing initializeExamConfigsSheet
-async function initializeExamConfigsSheet() {
-  await initializeDoc();
-  const sheet = doc.sheetsByIndex[7]; // index 7 = 8th sheet (adjust as needed)
-  if (!sheet) {
-    throw new Error('Exam Configs sheet not found at index 7');
-  }
-  await sheet.setHeaderRow(['ID', 'Class', 'Exam', 'Subjects']);
-  return sheet;
-}
 
-// Start server
-app.listen(PORT, async () => {
-  try {
-    await initializeDoc();
-    console.log(`MySchool-Official Node.js Server is Running on http://localhost:${PORT}`);
-  } catch (error) {
-    console.error('Failed to start server due to Google Spreadsheet initialization error:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    process.exit(1);
-  }
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err.message);
+  res.status(500).json({ error: 'Internal Server Error' });
 });
 
-
-
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received. Closing server...');
-  if (server) {
-    server.close(() => {
-      logger.info('Server closed.');
-      process.exit(0);
-    });
-  } else {
-    process.exit(0);
-  }
-});
-
-process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception:', err);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-// Export for Vercel compatibility
-export default app;
-
-// Only listen if not running on Vercel
+// Start server for local development
+const PORT = process.env.VERCEL === '1' ? 3000 : (process.env.PORT || 3000);
 if (process.env.VERCEL !== '1') {
-  var server = app.listen(PORT, () => {
-    logger.info(`Server running on http://localhost:${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`🚀 MySchool-Server running on http://localhost:${PORT}`);
+    console.log(`Backend URL: http://localhost:${PORT}`);
   });
+} else {
+  console.log('🚀 MySchool-Server running in Vercel serverless mode');
 }
+
+// Export for Vercel serverless
+export default app;

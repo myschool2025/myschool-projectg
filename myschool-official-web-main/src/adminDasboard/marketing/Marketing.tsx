@@ -102,7 +102,8 @@ interface ReportResponse {
   total: number;
 }
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/$/, '');
+console.log('Backend URL:', BACKEND_URL);
 const CLASS_OPTIONS = (classesData as { name: string }[]).map(cls => cls.name);
 
 const Marketing: React.FC = () => {

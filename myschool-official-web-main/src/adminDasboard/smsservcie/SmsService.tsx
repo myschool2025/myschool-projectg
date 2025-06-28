@@ -8,8 +8,8 @@ import 'jspdf-autotable';
 import Loading from '../../components/loader/Loading';
 import classesData from '@/lib/classes.json';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
+console.log('Backend URL:', BACKEND_URL);
 
 interface Student {
   id?: string;
@@ -474,183 +474,183 @@ const SMSService = () => {
                 >
                   Export CSV
                 </button>
-<button
-  onClick={async () => {
-    if (!selectedClass) {
-      alert('Please select a class first!');
-      return;
-    }
-    try {
-      const response = await axios.get(`${BACKEND_URL}/students`, {
-        params: { class: selectedClass },
-      });
-      const studentsData = response.data.students as Student[];
-      const totalStudents = response.data.total;
-      const exportDate = new Date().toLocaleDateString();
+                <button
+                  onClick={async () => {
+                    if (!selectedClass) {
+                      alert('Please select a class first!');
+                      return;
+                    }
+                    try {
+                      const response = await axios.get(`${BACKEND_URL}/students`, {
+                        params: { class: selectedClass },
+                      });
+                      const studentsData = response.data.students as Student[];
+                      const totalStudents = response.data.total;
+                      const exportDate = new Date().toLocaleDateString();
 
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(`
-          <html>
-            <head>
-              <title>MySchool - ${selectedClass} - Students</title>
-              <style>
-                @media print {
-                  @page { margin: 2cm; }
-                  th {
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
-                  }
-                }
-                body {
-                  font-family: Arial, sans-serif;
-                  margin: 0;
-                  padding: 20px;
-                  color: #333;
-                  line-height: 1.5;
-                }
-                .container {
-                  max-width: 1200px;
-                  margin: 0 auto;
-                }
-                .header {
-                  text-align: center;
-                  margin-bottom: 30px;
-                  border-bottom: 2px solid #3498db;
-                  padding-bottom: 15px;
-                }
-                .header h1 {
-                  color: #2c3e50;
-                  margin: 0;
-                  font-size: 28px;
-                  font-weight: 700;
-                }
-                .header p {
-                  color: #555;
-                  font-size: 14px;
-                  margin: 5px 0 0;
-                }
-                .stats {
-                  background: #f8f9fa;
-                  padding: 15px;
-                  border-radius: 8px;
-                  margin-bottom: 20px;
-                  display: flex;
-                  justify-content: space-between;
-                  font-size: 14px;
-                  border: 1px solid #ddd;
-                }
-                table {
-                  width: 100%;
-                  border-collapse: collapse;
-                  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-                }
-                th, td {
-                  border: 1px solid #ddd;
-                  padding: 12px;
-                  text-align: left;
-                  font-size: 14px;
-                }
-                th {
-                  background-color: #3498db;
-                  color: #fff;
-                  font-weight: 600;
-                  text-transform: uppercase;
-                }
-                tr:nth-child(even) {
-                  background-color: #f9f9f9;
-                }
-                tr:hover {
-                  background-color: #f1f1f1;
-                }
-                img {
-                  max-width: 100px;
-                  height: auto;
-                  border-radius: 4px;
-                  display: block;
-                }
-                .footer {
-                  margin-top: 20px;
-                  text-align: center;
-                  color: #777;
-                  font-size: 12px;
-                  border-top: 1px solid #ddd;
-                  padding-top: 15px;
-                }
-                @media (max-width: 768px) {
-                  table, th, td {
-                    font-size: 12px;
-                    padding: 8px;
-                  }
-                  img {
-                    max-width: 60px;
-                  }
-                }
-              </style>
-            </head>
-            <body>
-              <div class="container">
-                <div class="header">
-                  <h1>MySchool - ${selectedClass} - Students</h1>
-                  <p>Generated on: ${exportDate}</p>
-                </div>
-                <div class="stats">
-                  <span>Total Students: ${totalStudents}</span>
-                  <span>Exported on: ${exportDate}</span>
-                </div>
-                <table>
-                  <tr>
-                    <th>Name</th>
-                    <th>English Name</th>
-                    <th>Number</th>
-                    <th>Class</th>
-                    <th>Description</th>
-                    <th>Mother Name</th>
-                    <th>Father Name</th>
-                    <th>Photo</th>
-                  </tr>
-                  ${studentsData
-                    .map(
-                      (student) => `
-                    <tr>
-                      <td>${student.name || '-'}</td>
-                      <td>${student.englishName || '-'}</td>
-                      <td>${student.number || '-'}</td>
-                      <td>${student.class || '-'}</td>
-                      <td>${student.description || '-'}</td>
-                      <td>${student.motherName || '-'}</td>
-                      <td>${student.fatherName || '-'}</td>
-                      <td>${
-                        student.photoUrl
-                          ? `<img src="${student.photoUrl}" alt="${student.name || 'Student'}'s photo" onerror="this.style.display='none';this.nextSibling.style.display='block'" /><span style="display:none">Image not available</span>`
-                          : 'No photo'
-                      }</td>
-                    </tr>
-                  `
-                    )
-                    .join('')}
-                </table>
-                <div class="footer">
-                  Generated by MySchool Official Website • https://myschool-offical.netlify.app
-                </div>
-              </div>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
-        printWindow.print();
-        log(`Exported ${selectedClass} students to PDF`);
-      }
-    } catch (error) {
-      log(`PDF Export error: ${error instanceof Error ? error.message : String(error)}`);
-      alert('Failed to export PDF');
-    }
-  }}
-  className="flex-1 px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 text-sm"
-  disabled={isLoading}
-  >
-    Export PDF
-</button>
+                      const printWindow = window.open('', '_blank');
+                      if (printWindow) {
+                        printWindow.document.write(`
+                          <html>
+                            <head>
+                              <title>MySchool - ${selectedClass} - Students</title>
+                              <style>
+                                @media print {
+                                  @page { margin: 2cm; }
+                                  th {
+                                    -webkit-print-color-adjust: exact;
+                                    print-color-adjust: exact;
+                                  }
+                                }
+                                body {
+                                  font-family: Arial, sans-serif;
+                                  margin: 0;
+                                  padding: 20px;
+                                  color: #333;
+                                  line-height: 1.5;
+                                }
+                                .container {
+                                  max-width: 1200px;
+                                  margin: 0 auto;
+                                }
+                                .header {
+                                  text-align: center;
+                                  margin-bottom: 30px;
+                                  border-bottom: 2px solid #3498db;
+                                  padding-bottom: 15px;
+                                }
+                                .header h1 {
+                                  color: #2c3e50;
+                                  margin: 0;
+                                  font-size: 28px;
+                                  font-weight: 700;
+                                }
+                                .header p {
+                                  color: #555;
+                                  font-size: 14px;
+                                  margin: 5px 0 0;
+                                }
+                                .stats {
+                                  background: #f8f9fa;
+                                  padding: 15px;
+                                  border-radius: 8px;
+                                  margin-bottom: 20px;
+                                  display: flex;
+                                  justify-content: space-between;
+                                  font-size: 14px;
+                                  border: 1px solid #ddd;
+                                }
+                                table {
+                                  width: 100%;
+                                  border-collapse: collapse;
+                                  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                                }
+                                th, td {
+                                  border: 1px solid #ddd;
+                                  padding: 12px;
+                                  text-align: left;
+                                  font-size: 14px;
+                                }
+                                th {
+                                  background-color: #3498db;
+                                  color: #fff;
+                                  font-weight: 600;
+                                  text-transform: uppercase;
+                                }
+                                tr:nth-child(even) {
+                                  background-color: #f9f9f9;
+                                }
+                                tr:hover {
+                                  background-color: #f1f1f1;
+                                }
+                                img {
+                                  max-width: 100px;
+                                  height: auto;
+                                  border-radius: 4px;
+                                  display: block;
+                                }
+                                .footer {
+                                  margin-top: 20px;
+                                  text-align: center;
+                                  color: #777;
+                                  font-size: 12px;
+                                  border-top: 1px solid #ddd;
+                                  padding-top: 15px;
+                                }
+                                @media (max-width: 768px) {
+                                  table, th, td {
+                                    font-size: 12px;
+                                    padding: 8px;
+                                  }
+                                  img {
+                                    max-width: 60px;
+                                  }
+                                }
+                              </style>
+                            </head>
+                            <body>
+                              <div class="container">
+                                <div class="header">
+                                  <h1>MySchool - ${selectedClass} - Students</h1>
+                                  <p>Generated on: ${exportDate}</p>
+                                </div>
+                                <div class="stats">
+                                  <span>Total Students: ${totalStudents}</span>
+                                  <span>Exported on: ${exportDate}</span>
+                                </div>
+                                <table>
+                                  <tr>
+                                    <th>Name</th>
+                                    <th>English Name</th>
+                                    <th>Number</th>
+                                    <th>Class</th>
+                                    <th>Description</th>
+                                    <th>Mother Name</th>
+                                    <th>Father Name</th>
+                                    <th>Photo</th>
+                                  </tr>
+                                  ${studentsData
+                                    .map(
+                                      (student) => `
+                                    <tr>
+                                      <td>${student.name || '-'}</td>
+                                      <td>${student.englishName || '-'}</td>
+                                      <td>${student.number || '-'}</td>
+                                      <td>${student.class || '-'}</td>
+                                      <td>${student.description || '-'}</td>
+                                      <td>${student.motherName || '-'}</td>
+                                      <td>${student.fatherName || '-'}</td>
+                                      <td>${
+                                        student.photoUrl
+                                          ? `<img src="${student.photoUrl}" alt="${student.name || 'Student'}'s photo" onerror="this.style.display='none';this.nextSibling.style.display='block'" /><span style="display:none">Image not available</span>`
+                                          : 'No photo'
+                                      }</td>
+                                    </tr>
+                                  `
+                                    )
+                                    .join('')}
+                                </table>
+                                <div class="footer">
+                                  Generated by MySchool Official Website • https://myschool-offical.netlify.app
+                                </div>
+                              </div>
+                            </body>
+                          </html>
+                        `);
+                        printWindow.document.close();
+                        printWindow.print();
+                        log(`Exported ${selectedClass} students to PDF`);
+                      }
+                    } catch (error) {
+                      log(`PDF Export error: ${error instanceof Error ? error.message : String(error)}`);
+                      alert('Failed to export PDF');
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 text-sm"
+                  disabled={isLoading}
+                >
+                  Export PDF
+                </button>
               </div>
             </div>
           </motion.div>
