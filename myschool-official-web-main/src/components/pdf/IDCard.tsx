@@ -1,11 +1,5 @@
 import React from 'react';
-
-const getAbsoluteUrl = (url?: string) => {
-  if (!url) return '';
-  if (url.startsWith('http')) return url;
-  if (url.startsWith('/')) return window.location.origin + url;
-  return url;
-};
+import { getAbsoluteUrl } from '@/lib/utils';
 
 interface IDCardProps {
   students: {

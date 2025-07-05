@@ -1,4 +1,5 @@
 import React from 'react';
+import { getAbsoluteUrl } from '@/lib/utils';
 
 interface SubjectMark {
   subject: string;

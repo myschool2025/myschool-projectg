@@ -34,9 +34,10 @@ interface ResultsTableProps {
   loadingResults: boolean;
   openEditModal: (result: ResultRow) => void;
   openDeleteConfirm: (id: string) => void;
+  userRole?: string;
 }
 
-const ResultsTable: React.FC<ResultsTableProps> = React.memo(({ parsedResults, loadingResults, openEditModal, openDeleteConfirm }) => {
+const ResultsTable: React.FC<ResultsTableProps> = React.memo(({ parsedResults, loadingResults, openEditModal, openDeleteConfirm, userRole }) => {
   const isMobile = window.innerWidth < 768;
 
   return (
@@ -83,7 +84,7 @@ const ResultsTable: React.FC<ResultsTableProps> = React.memo(({ parsedResults, l
                 <span className="inline-block bg-blue-100 text-blue-700 rounded px-2 py-0.5 font-bold">{result.rank}</span>
               </td>
                 <td className="border px-2 py-1">
-                  {hasData && (
+                  {hasData && (userRole === 'admin' || userRole === 'staff') && (
                     <>
                       <Button size="sm" className="mr-2" onClick={() => openEditModal(result)}>Edit</Button>
                       <Button size="sm" variant="destructive" onClick={() => openDeleteConfirm(result.id)}>Delete</Button>
@@ -404,7 +405,7 @@ const SchoolResult: React.FC = () => {
             <Button className="bg-green-600 text-white px-3 py-1 rounded" onClick={openAddModal}>Add Result</Button>
           )}
         </div>
-        <ResultsTable parsedResults={results} loadingResults={loadingResults} openEditModal={openEditModal} openDeleteConfirm={openDeleteConfirm} />
+        <ResultsTable parsedResults={results} loadingResults={loadingResults} openEditModal={openEditModal} openDeleteConfirm={openDeleteConfirm} userRole={user?.role} />
       </div>
       {showResultModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

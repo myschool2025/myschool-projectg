@@ -6,6 +6,7 @@ import SeatPlan from '@/components/pdf/SeatPlan';
 import html2pdf from 'html2pdf.js';
 import classesList from '@/lib/classes.json';
 import axios from 'axios';
+import { getAbsoluteUrl } from '@/lib/utils';
 
 const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
 
@@ -52,12 +53,7 @@ const fetchExamConfigs = async (className = '') => {
   }
 };
 
-const getAbsoluteUrl = (url) => {
-  if (!url) return '';
-  if (url.startsWith('http')) return url;
-  if (url.startsWith('/')) return window.location.origin + url;
-  return url;
-};
+
 
 const preloadImages = async (urls) => {
   const promises = urls.filter(Boolean).map(
